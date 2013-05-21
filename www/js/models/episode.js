@@ -9,20 +9,27 @@ define([
     'require'
 ], function(_, Backbone, DataStore, queue, Episodes, require) {
     var EpisodeModel = Backbone.Model.extend({
+        // Keep track of how many chunks of data we receive and how many
+        // we've saved, so we know when we have all data.
+        _chunkCount: 0,
+        _chunkSaveCount: 0,
+
         collection: Episodes,
         defaults: {
+            _chunkCount: 0,
             isDownloaded: false,
             playbackPosition: 0,
             url: null
         },
 
+        initialize: function() {
+            _(this).bindAll('_download', '_incrementChunkSaveCount',
+                            '_onDownloadComplete');
+        },
+
         // Access (or set) an app's blob data in indexedDB.
-        blob: function(blobDataOrCallback) {
-            if (blobDataOrCallback instanceof Function) {
-                this._getBlob(blobDataOrCallback);
-            } else {
-                this._setBlob(blobDataOrCallback);
-            }
+        blob: function(callback) {
+            this._assembleChunkData(callback);
         },
 
         // Output the published date of this podcast in a pretty way.
@@ -62,26 +69,15 @@ define([
             var request = new window.XMLHttpRequest({mozSystem: true});
 
             request.open('GET', this.get('enclosure'), true);
-            request.responseType = 'blob';
+            request.responseType = 'moz-chunked-arraybuffer';
 
-            request.addEventListener('load', function(event) {
-                // TODO: Make this better.
-                // Assume "mpeg" = MP3, for now. Kinda hacky.
-                var type;
-                try {
-                    type = request.response.type.split('/')[1];
+            request.addEventListener('load', this._onDownloadComplete);
 
-                    if (type === 'mpeg') {
-                        type = 'mp3';
-                    }
-                } catch (e) {
-                    type = 'mp3';
-                }
+            request.addEventListener('progress', function(event) {
+                self._saveChunk(self._chunkCount, request.response);
 
-                self.set({type: type});
-                self.save();
-                self.blob(request.response);
-                queue.done('e{id}'.format({id: self.get('id')}));
+                // Increment our internal data chunk count.
+                self._chunkCount++;
             });
 
             request.addEventListener('error', function(event) {
@@ -93,8 +89,75 @@ define([
             request.send(null);
         },
 
-        _getBlob: function(callback) {
-            DataStore.get(this.id, callback);
+        _assembleChunkData: function(callback) {
+            var audioBlobs = [];
+            var chunkCount = this.get('_chunkCount');
+            var self = this;
+            var type = this.get('type');
+
+            function _walkChunks(chunkID) {
+                if (chunkID === undefined) {
+                    chunkID = 0;
+                }
+
+                if (chunkID < chunkCount) {
+                    DataStore.get('_chunk-episode-{id}-{chunk}'.format({
+                        chunk: chunkID,
+                        id: self.get('id')
+                    }), function(data) {
+                        audioBlobs.push(data.file);
+                        _walkChunks(chunkID + 1);
+                    });
+                } else {
+                    var blob = new window.Blob(audioBlobs, {type: type});
+                    callback(blob);
+                }
+            }
+
+            _walkChunks();
+        },
+
+        _incrementChunkSaveCount: function(callback) {
+            this._chunkSaveCount++;
+
+            if (this._chunkCount === this._chunkSaveCount && this.get('type')) {
+                this.set({
+                    _chunkCount: this._chunkCount,
+                    isDownloaded: true
+                });
+                this.save();
+
+                queue.done('e{id}'.format({id: this.get('id')}));
+
+                this.trigger('downloaded');
+                this.trigger('updated');
+            }
+        },
+
+        _onDownloadComplete: function(event) {
+            // TODO: Make this better.
+            var type;
+
+            try {
+                type = event.target.response.type.split('/')[1];
+            } catch (e) {
+                type = this.get('enclosure').split('.')[this.get('enclosure').split('.').length - 1];
+            }
+
+            // Assume "mpeg" = MP3, for now. Kinda hacky.
+            if (type === 'mpeg') {
+                type = 'mp3';
+            }
+
+            this.set({type: type});
+            this.save();
+        },
+
+        _saveChunk: function(chunk, arrayBuffer) {
+            DataStore.set('_chunk-episode-{id}-{chunk}'.format({
+                chunk: chunk,
+                id: this.get('id')
+            }), arrayBuffer, this._incrementChunkSaveCount);
         },
 
         _setBlob: function(blob) {
