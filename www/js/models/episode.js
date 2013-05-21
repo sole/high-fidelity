@@ -1,3 +1,4 @@
+/* jshint plusplus: false */
 'use strict';
 
 define([
@@ -24,10 +25,10 @@ define([
 
         initialize: function() {
             _(this).bindAll('_download', '_incrementChunkSaveCount',
-                            '_onDownloadComplete');
+                            '_setTypeFromEvent');
         },
 
-        // Access (or set) an app's blob data in indexedDB.
+        // Access an app's blob data from indexedDB.
         blob: function(callback) {
             this._assembleChunkData(callback);
         },
@@ -71,7 +72,7 @@ define([
             request.open('GET', this.get('enclosure'), true);
             request.responseType = 'moz-chunked-arraybuffer';
 
-            request.addEventListener('load', this._onDownloadComplete);
+            request.addEventListener('load', this._setTypeFromEvent);
 
             request.addEventListener('progress', function(event) {
                 self._saveChunk(self._chunkCount, request.response);
@@ -89,6 +90,22 @@ define([
             request.send(null);
         },
 
+        // Because of limiations/platform bugs in b2g18 (what ships on
+        // first-gen Firefox OS devices), we can't move around huge Blob
+        // objects (particularly, we can't save them anywhere) without crashing
+        // the app on a device from out of memory errors.
+        //
+        // This retrieves the smaller, more managable chunks of data from
+        // IndexedDB and assembles them into a Blob object we hand off to a
+        // callback function. For some reason, B2G seems to cope just fine with
+        // this very odd solution because it handles Blobs full of arrayBuffers
+        // better than it saves large Blobs.
+        //
+        // This is a HACK and should be fixed by platform in the next release,
+        // I hope.
+        //
+        // See: https://bugzilla.mozilla.org/show_bug.cgi?id=873274
+        // and: https://bugzilla.mozilla.org/show_bug.cgi?id=869812
         _assembleChunkData: function(callback) {
             var audioBlobs = [];
             var chunkCount = this.get('_chunkCount');
@@ -117,7 +134,10 @@ define([
             _walkChunks();
         },
 
-        _incrementChunkSaveCount: function(callback) {
+        // Called as a callback whenever a new chunk of audio data is saved.
+        // Used to keep track of the number of downloaded versus processed
+        // chunks, and to fire the queue finished, download, and update events.
+        _incrementChunkSaveCount: function() {
             this._chunkSaveCount++;
 
             if (this._chunkCount === this._chunkSaveCount && this.get('type')) {
@@ -134,7 +154,16 @@ define([
             }
         },
 
-        _onDownloadComplete: function(event) {
+        _saveChunk: function(chunk, arrayBuffer) {
+            DataStore.set('_chunk-episode-{id}-{chunk}'.format({
+                chunk: chunk,
+                id: this.get('id')
+            }), arrayBuffer, this._incrementChunkSaveCount);
+        },
+
+        // Set the audio type based on the reponseType (or filename) of this
+        // episode's enclosure file/URL.
+        _setTypeFromEvent: function(event) {
             // TODO: Make this better.
             var type;
 
@@ -151,26 +180,6 @@ define([
 
             this.set({type: type});
             this.save();
-        },
-
-        _saveChunk: function(chunk, arrayBuffer) {
-            DataStore.set('_chunk-episode-{id}-{chunk}'.format({
-                chunk: chunk,
-                id: this.get('id')
-            }), arrayBuffer, this._incrementChunkSaveCount);
-        },
-
-        _setBlob: function(blob) {
-            var self = this;
-
-            DataStore.set(this.id, blob, function() {
-                self.set({
-                    isDownloaded: true
-                });
-                self.save();
-                self.trigger('downloaded');
-                self.trigger('updated');
-            });
         }
     });
 
