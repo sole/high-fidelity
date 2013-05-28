@@ -12,6 +12,7 @@ define([
     'models/podcast',
     'routers/app'
 ], function($, DataStore, Jed, Episodes, Podcasts, Episode, Podcast, AppRouter) {
+    // Globals used throughout the app, accessible via window.GLOBALS.
     var GLOBALS = {
         DATABASE_NAME: 'podcasts',
         HAS: {
@@ -35,6 +36,9 @@ define([
     };
     window.GLOBALS = GLOBALS;
 
+    // Called by main.js to kick off the app loading. We make sure IndexedDB is
+    // available, load up our locale files, then actually start loading in
+    // views.
     function initialize(loadAppCallback) {
         if (GLOBALS.HAS.nativeScroll) {
             $('body').addClass('native-scroll');
@@ -77,12 +81,11 @@ define([
 
     // Set the language of the app and retrieve the proper localization files.
     // This could be improved, but for now works fine.
-    // TODO: Allow an override argument for testing, etc.
     function setLanguage(callback, override) {
         var request = new window.XMLHttpRequest();
 
         request.open('GET', 'locale/{lang}.json'.format({
-            lang: GLOBALS.LANGUAGE
+            lang: override || GLOBALS.LANGUAGE
         }), true);
 
         request.addEventListener('load', function(event) {
@@ -114,6 +117,8 @@ define([
         }
     }
 
+    // Return a timestamp from a JavaScript Date object. If no argument is
+    // supplied, return the timestamp for "right now".
     function timestamp(date) {
         if (!date) {
             date = new Date();

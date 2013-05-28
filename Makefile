@@ -44,7 +44,9 @@ install_to_gaia: build
 	mkdir $(GAIA)/apps/podcasts
 	cp -r www-built/ $(GAIA)/apps/podcasts
 
-marketplace: build zip
+mini_manifest: zip
+	- rm www-manifest/Podcasts.zip
+	cp Podcasts.zip www-manifest/
 
 prep_for_test:
 	rm -rf $(B2G_FOLDER)/gaia/profile
@@ -57,14 +59,11 @@ run_tests:
 setup_gaia:
 	$(shell if [ ! -d "$(GAIA)" ]; then cp -r vendor/gaia $(GAIA); fi)
 
-submodules:
-	git submodule update --init --recursive
-
 test: setup_gaia install_to_gaia build_gaia prep_for_test run_tests
 
 update_locale_json:
 	node ./locales/compile.js
 
-zip:
+zip: build
 	- rm Podcasts.zip
 	cd www-built && zip -r ../Podcasts.zip *

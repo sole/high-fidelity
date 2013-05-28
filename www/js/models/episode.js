@@ -25,7 +25,7 @@ define([
 
         initialize: function() {
             _(this).bindAll('_download', '_incrementChunkSaveCount',
-                            '_onDownloadComplete');
+                            '_setTypeFromEvent');
         },
 
         // Access an app's blob data from indexedDB.
